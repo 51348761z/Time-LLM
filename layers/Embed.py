@@ -34,11 +34,12 @@ class TokenEmbedding(nn.Module):
         self.tokenConv = nn.Conv1d(in_channels=c_in, out_channels=d_model,
                                    kernel_size=3, padding=padding, padding_mode='circular', bias=False)
         for m in self.modules():
-            if isinstance(m, nn.Conv1d):
+            if isinstance(m, nn.Conv1d): # 对于Conv1d，初始化权重为kaiming_normal
                 nn.init.kaiming_normal_(
                     m.weight, mode='fan_in', nonlinearity='leaky_relu')
 
     def forward(self, x):
+        # 使用x.permute(0, 2, 1)改变维度顺序，从而将它调整为(B, T, N)，使得卷积操作的输入通道与时间步相匹配。
         x = self.tokenConv(x.permute(0, 2, 1)).transpose(1, 2)
         return x
 
@@ -152,11 +153,16 @@ class ReplicationPad1d(nn.Module):
         self.padding = padding
 
     def forward(self, input: Tensor) -> Tensor:
+        # input shape:(B, N, T)
+        # replicate_padding shape:(B, N, padding[-1])
         replicate_padding = input[:, :, -1].unsqueeze(-1).repeat(1, 1, self.padding[-1])
         output = torch.cat([input, replicate_padding], dim=-1)
+        # output shape:(B, N, T+padding[-1])
         return output
 
-
+"""
+    PatchEmbedding: 将输入数据分割为小块（patch），并对每个小块生成特征嵌入
+"""
 class PatchEmbedding(nn.Module):
     def __init__(self, d_model, patch_len, stride, dropout):
         super(PatchEmbedding, self).__init__()
@@ -176,10 +182,11 @@ class PatchEmbedding(nn.Module):
 
     def forward(self, x):
         # do patching
-        n_vars = x.shape[1]
-        x = self.padding_patch_layer(x)
+        n_vars = x.shape[1] # 记录输入数据的特征数量
+        x = self.padding_patch_layer(x) # 对输入数据应用填充操作, shape = (B, N, T+padding[-1]) = (8, 1, 520)
+        # 将输入沿时间维度划分为若干个patch, x shape = (8, 1, 64, 16), unfold 用来手动实现滑动窗口操作
         x = x.unfold(dimension=-1, size=self.patch_len, step=self.stride)
-        x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3]))
+        x = torch.reshape(x, (x.shape[0] * x.shape[1], x.shape[2], x.shape[3])) # x shape = (8*1, 64, 16)
         # Input encoding
         x = self.value_embedding(x)
         return self.dropout(x), n_vars

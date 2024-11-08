@@ -35,37 +35,43 @@ def adjust_learning_rate(accelerator, optimizer, scheduler, epoch, args, printou
                 print('Updating learning rate to {}'.format(lr))
 
 
+"""
+    EarlyStopping 类的作用是用于在训练过程中，监控验证集上的损失值，当验证集损失不再下降时，提前停止训练以避免过拟合
+"""
 class EarlyStopping:
     def __init__(self, accelerator=None, patience=7, verbose=False, delta=0, save_mode=True):
-        self.accelerator = accelerator
-        self.patience = patience
+        self.accelerator = accelerator  # 用于分布式加速训练的加速器对象
+        self.patience = patience  # 在验证集损失不下降的情况下，容忍多少次验证损失不下降的次数，默认值是 7
         self.verbose = verbose
-        self.counter = 0
-        self.best_score = None
-        self.early_stop = False
-        self.val_loss_min = np.Inf
-        self.delta = delta
+        self.counter = 0  # 记录验证损失未减少的次数
+        self.best_score = None  # 记录目前最佳的验证损失分数
+        self.early_stop = False  # 当满足提前停止条件时被设置为 True
+        self.val_loss_min = np.Inf # 记录验证集损失的最小值，初始化为正无穷(np.Inf)
+        self.delta = delta  # 用于判断验证损失下降的最小变化，如果下降的变化小于 delta，则视为没有明显下降
         self.save_mode = save_mode
 
+    """
+        特殊方法，使得 EarlyStopping 类的实例可以像函数一样被调用，输入当前的验证损失、模型和保存路径
+    """
     def __call__(self, val_loss, model, path):
-        score = -val_loss
-        if self.best_score is None:
+        score = -val_loss  # use -val_loss to represent score
+        if self.best_score is None:  ## if best_score not initialized yet
             self.best_score = score
             if self.save_mode:
                 self.save_checkpoint(val_loss, model, path)
-        elif score < self.best_score + self.delta:
+        elif score < self.best_score + self.delta:  # score not significantly increased
             self.counter += 1
             if self.accelerator is None:
                 print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
             else:
                 self.accelerator.print(f'EarlyStopping counter: {self.counter} out of {self.patience}')
-            if self.counter >= self.patience:
+            if self.counter >= self.patience:  # reach patience limitation
                 self.early_stop = True
-        else:
+        else: ## update best score
             self.best_score = score
             if self.save_mode:
                 self.save_checkpoint(val_loss, model, path)
-            self.counter = 0
+            self.counter = 0 # reset counter
 
     def save_checkpoint(self, val_loss, model, path):
         if self.verbose:
@@ -81,7 +87,7 @@ class EarlyStopping:
             torch.save(model.state_dict(), path + '/' + 'checkpoint')
         else:
             torch.save(model.state_dict(), path + '/' + 'checkpoint')
-        self.val_loss_min = val_loss
+        self.val_loss_min = val_loss  # update loss
 
 
 class dotdict(dict):

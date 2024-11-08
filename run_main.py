@@ -1,9 +1,11 @@
 import argparse
+from matplotlib.pyplot import sys
 import torch
 from accelerate import Accelerator, DeepSpeedPlugin
 from accelerate import DistributedDataParallelKwargs
 from torch import nn, optim
 from torch.optim import lr_scheduler
+from torch.utils.data import dataloader
 from tqdm import tqdm
 
 from models import Autoformer, DLinear, TimeLLM
@@ -136,7 +138,12 @@ for ii in range(args.itr):
 
     path = os.path.join(args.checkpoints,
                         setting + '-' + args.model_comment)  # unique checkpoint saving path
-    args.content = load_content(args)
+    args.content = load_content(args) # read prompt content
+
+    """
+        accelerator.is_local_main_process是本机的主进程（单机时使用）
+        accelerator.is_main_process则代表整个集群的主进程（多机时使用）
+    """
     if not os.path.exists(path) and accelerator.is_local_main_process:
         os.makedirs(path)
 
@@ -152,7 +159,7 @@ for ii in range(args.itr):
 
     model_optim = optim.Adam(trained_parameters, lr=args.learning_rate)
 
-    if args.lradj == 'COS':
+    if args.lradj == 'COS': # adjust learning rate
         scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(model_optim, T_max=20, eta_min=1e-8)
     else:
         scheduler = lr_scheduler.OneCycleLR(optimizer=model_optim,
@@ -170,31 +177,42 @@ for ii in range(args.itr):
     if args.use_amp:
         scaler = torch.cuda.amp.GradScaler()
 
+    # for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in enumerate(train_loader):
+    # for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(train_loader)):
+    #     # print(i, batch_x)
+    #     # print(i, batch_x_mark)
+    #     # print(f'{i}: {batch_x}')
+    #     print(f'{i}: {batch_x.shape}, {batch_y.shape}, {batch_x_mark.shape}, {batch_y_mark.shape}')
+    # print(train_loader)
+    # sys.exit()
+
     for epoch in range(args.train_epochs):
         iter_count = 0
-        train_loss = []
+        train_loss = [] # store loss for each epoch
 
-        model.train()
+        model.train() # set training mode to enable the batch normalization and dropout
         epoch_time = time.time()
         for i, (batch_x, batch_y, batch_x_mark, batch_y_mark) in tqdm(enumerate(train_loader)):
             iter_count += 1
             model_optim.zero_grad()
 
+            # print(f'{i}: {batch_x.shape}, {batch_y.shape}, {batch_x_mark.shape}, {batch_y_mark.shape}')
             batch_x = batch_x.float().to(accelerator.device)
             batch_y = batch_y.float().to(accelerator.device)
             batch_x_mark = batch_x_mark.float().to(accelerator.device)
             batch_y_mark = batch_y_mark.float().to(accelerator.device)
 
             # decoder input
+            # 初始化与 batch_y 形状相同的零张量，并在前面拼接上 batch_y 的标签部分。
             dec_inp = torch.zeros_like(batch_y[:, -args.pred_len:, :]).float().to(
                 accelerator.device)
             dec_inp = torch.cat([batch_y[:, :args.label_len, :], dec_inp], dim=1).float().to(
                 accelerator.device)
 
             # encoder - decoder
-            if args.use_amp:
-                with torch.cuda.amp.autocast():
-                    if args.output_attention:
+            if args.use_amp: # 自动混合精度 AMP
+                with torch.cuda.amp.autocast(): # 执行前向计算，自动管理精度
+                    if args.output_attention: # 根据 output_attention 参数调用不同的前向传递方式得到输出
                         outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                     else:
                         outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
@@ -205,14 +223,20 @@ for ii in range(args.itr):
                     loss = criterion(outputs, batch_y)
                     train_loss.append(loss.item())
             else:
+                print("No AMP")
                 if args.output_attention:
                     outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)[0]
                 else:
                     outputs = model(batch_x, batch_x_mark, dec_inp, batch_y_mark)
 
                 f_dim = -1 if args.features == 'MS' else 0
+                # print(f'f_dim = {f_dim}')
+                # outputsTest = outputs[:, -args.pred_len:, -1:]
+                # batch_yTest = batch_y[:, -args.pred_len:, -1:]
+                # print(f'outputsTest.shape = {outputsTest.shape}, batch_yTest.shape = {batch_yTest.shape}')
                 outputs = outputs[:, -args.pred_len:, f_dim:]
                 batch_y = batch_y[:, -args.pred_len:, f_dim:]
+                # print(f'outputs.shape = {outputs.shape}, batch_y.shape = {batch_y.shape}')
                 loss = criterion(outputs, batch_y)
                 train_loss.append(loss.item())
 
@@ -225,7 +249,7 @@ for ii in range(args.itr):
                 iter_count = 0
                 time_now = time.time()
 
-            if args.use_amp:
+            if args.use_amp: # False by default
                 scaler.scale(loss).backward()
                 scaler.step(model_optim)
                 scaler.update()
@@ -233,6 +257,7 @@ for ii in range(args.itr):
                 accelerator.backward(loss)
                 model_optim.step()
 
+            # 若args.lradj为'TST'，使用自定义函数adjust_learning_rate来动态调整学习率； False by default
             if args.lradj == 'TST':
                 adjust_learning_rate(accelerator, model_optim, scheduler, epoch + 1, args, printout=False)
                 scheduler.step()

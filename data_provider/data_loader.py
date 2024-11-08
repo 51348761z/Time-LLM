@@ -9,13 +9,17 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-
+"""
+    torch.utils.data.DataLoader and torch.utils.data.Dataset that allow you to use pre-loaded 
+    datasets as well as your own data. Dataset stores the samples and their corresponding labels, 
+    and DataLoader wraps an iterable around the Dataset to enable easy access to the samples.
+"""
 class Dataset_ETT_hour(Dataset):
     def __init__(self, root_path, flag='train', size=None,
                  features='S', data_path='ETTh1.csv',
                  target='OT', scale=True, timeenc=0, freq='h', percent=100,
                  seasonal_patterns=None):
-        if size == None:
+        if size == None:  # 时间序列相关的长度
             self.seq_len = 24 * 4 * 4
             self.label_len = 24 * 4
             self.pred_len = 24 * 4
@@ -28,50 +32,68 @@ class Dataset_ETT_hour(Dataset):
         type_map = {'train': 0, 'val': 1, 'test': 2}
         self.set_type = type_map[flag]
 
-        self.percent = percent
-        self.features = features
+        self.percent = percent  # adjusting the size of dataset - usage percentage
+        self.features = features  # S:univariate, M:multivariate, MS:multivariate with seasonality
         self.target = target
-        self.scale = scale
-        self.timeenc = timeenc
-        self.freq = freq
+        self.scale = scale  # be normalized or not
+        self.timeenc = timeenc  # time coding format: 0 means m, d, y; 1 means more complex coding
+        self.freq = freq  # freq of time series. (such as per hour or per minute)
 
-        # self.percent = percent
-        self.root_path = root_path
-        self.data_path = data_path
+        self.root_path = root_path # dir path
+        self.data_path = data_path # filename
         self.__read_data__()
 
         self.enc_in = self.data_x.shape[-1]
         self.tot_len = len(self.data_x) - self.seq_len - self.pred_len + 1
+        print(f'totole length: {self.tot_len}')
 
     def __read_data__(self):
         self.scaler = StandardScaler()
         df_raw = pd.read_csv(os.path.join(self.root_path,
                                           self.data_path))
 
-        border1s = [0, 12 * 30 * 24 - self.seq_len, 12 * 30 * 24 + 4 * 30 * 24 - self.seq_len]
-        border2s = [12 * 30 * 24, 12 * 30 * 24 + 4 * 30 * 24, 12 * 30 * 24 + 8 * 30 * 24]
-
+        border1s = [
+            0,
+            12 * 30 * 24 - self.seq_len,
+            12 * 30 * 24 + 4 * 30 * 24 - self.seq_len,
+        ]
+        border2s = [
+            12 * 30 * 24,
+            12 * 30 * 24 + 4 * 30 * 24,
+            12 * 30 * 24 + 8 * 30 * 24,
+        ]
+        # chose one time border slice range according to the set_type(flag)
         border1 = border1s[self.set_type]
         border2 = border2s[self.set_type]
 
         if self.set_type == 0:
             border2 = (border2 - self.seq_len) * self.percent // 100 + self.seq_len
 
+        """
+            'M:multivariate predict multivariate, S: univariate predict univariate, '
+            'MS:multivariate predict univariate')
+        """
         if self.features == 'M' or self.features == 'MS':
-            cols_data = df_raw.columns[1:]
+            cols_data = df_raw.columns[1:] # select all features except the column of date
             df_data = df_raw[cols_data]
         elif self.features == 'S':
-            df_data = df_raw[[self.target]]
+            df_data = df_raw[[self.target]] # select only the self.target(string type) column
+        # print(f'df_raw:\n{df_raw}')
+        # print(f'df_raw[[self.target]]:\n{df_raw[[self.target]]}')
 
+        # print(f'df_data:\n{df_data}')
+        # print(f'df_data.values:\n{df_data.values}')
         if self.scale:
-            train_data = df_data[border1s[0]:border2s[0]]
-            self.scaler.fit(train_data.values)
-            data = self.scaler.transform(df_data.values)
+            train_data = df_data[border1s[0]:border2s[0]] # select only these rows for training
+            # pandas.DataFrame.values: only the values will be returned, axes labels will be removed
+            self.scaler.fit(train_data.values) # compute the mean and std
+            data = self.scaler.transform(df_data.values) # perform standardization
         else:
             data = df_data.values
 
-        df_stamp = df_raw[['date']][border1:border2]
-        df_stamp['date'] = pd.to_datetime(df_stamp.date)
+        df_stamp = df_raw[['date']][border1:border2] # save the time data from selected rows
+        df_stamp['date'] = pd.to_datetime(df_stamp.date) # convert argument to datetime
+        # generate timestamp by manully extracting or using frequency encoding
         if self.timeenc == 0:
             df_stamp['month'] = df_stamp.date.apply(lambda row: row.month, 1)
             df_stamp['day'] = df_stamp.date.apply(lambda row: row.day, 1)
@@ -82,13 +104,15 @@ class Dataset_ETT_hour(Dataset):
             data_stamp = time_features(pd.to_datetime(df_stamp['date'].values), freq=self.freq)
             data_stamp = data_stamp.transpose(1, 0)
 
+        # generate data slice x and y
         self.data_x = data[border1:border2]
         self.data_y = data[border1:border2]
         self.data_stamp = data_stamp
 
 
     def __getitem__(self, index):
-        feat_id = index // self.tot_len
+        # print(f'index: {index}, type: {type(index)}')
+        feat_id = index // self.tot_len # calculates the feature column position
         s_begin = index % self.tot_len
 
         s_end = s_begin + self.seq_len
@@ -99,12 +123,17 @@ class Dataset_ETT_hour(Dataset):
         seq_x_mark = self.data_stamp[s_begin:s_end]
         seq_y_mark = self.data_stamp[r_begin:r_end]
 
+        # return x, y, x_timestamp, y_timestamp
+        # print(f'seq_x:\n{seq_x}, seq_y:\n{seq_y}, seq_x_mark:\n{seq_x_mark}, seq_y_mark:\n{seq_y_mark}')
+        # print(f'seq_x.shape: {seq_x.shape}, seq_y.shape: {seq_y.shape}, seq_x_mark.shape: {seq_x_mark.shape}, seq_y_mark.shape: {seq_y_mark.shape}')
         return seq_x, seq_y, seq_x_mark, seq_y_mark
 
     def __len__(self):
+        # self.enc_in: encoder input size
         return (len(self.data_x) - self.seq_len - self.pred_len + 1) * self.enc_in
 
     def inverse_transform(self, data):
+        # inverse normalization to restore the data from normalized state to the original scale
         return self.scaler.inverse_transform(data)
 
 

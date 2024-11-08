@@ -2,13 +2,12 @@ model_name=TimeLLM
 # train_epochs=100
 train_epochs=10
 learning_rate=0.01
-llama_layers=32
-# llama_layers=6
+# llama_layers=32
+llama_layers=6
 
 master_port=2233
-# num_process = numGPU
 # num_process=8
-num_process=1
+num_process=1 # numGPU
 # batch_size=24
 batch_size=8
 d_model=32
@@ -18,8 +17,7 @@ llm_dim=768
 
 comment='TimeLLM-ETTh1'
 
-# accelerate launch --multi_gpu --mixed_precision bf16 --num_processes $num_process --main_process_port $master_port run_main.py \
-accelerate launch --mixed_precision bf16 --num_processes $num_process --main_process_port $master_port run_pretrain.py \
+accelerate launch --mixed_precision bf16 --num_processes $num_process --main_process_port $master_port run_main.py \
   --task_name long_term_forecast \
   --is_training 1 \
   --root_path ./dataset/ETT-small/ \
@@ -46,7 +44,35 @@ accelerate launch --mixed_precision bf16 --num_processes $num_process --main_pro
   --model_comment $comment \
   --llm_model $llm_model \
   --llm_dim $llm_dim \
-  --data_pretrain 'ETTh1'
+  # --data_pretrain 'ETTh1'
+
+# accelerate launch --mixed_precision bf16 --num_processes 1 --main_process_port 2233 run_main.py \
+#   --task_name long_term_forecast \
+#   --is_training 1 \
+#   --root_path ./dataset/ETT-small/ \
+#   --data_path ETTh1.csv \
+#   --model_id ETTh1_512_96 \
+#   --model 'TimeLLM' \
+#   --data ETTh1 \
+#   --features M \
+#   --seq_len 512 \
+#   --label_len 48 \
+#   --pred_len 96 \
+#   --factor 3 \
+#   --enc_in 7 \
+#   --dec_in 7 \
+#   --c_out 7 \
+#   --des 'Exp' \
+#   --itr 1 \
+#   --d_model 32 \
+#   --d_ff 128 \
+#   --batch_size 8 \
+#   --learning_rate 0.01 \
+#   --llm_layers 6 \
+#   --train_epochs 10 \
+#   --model_comment 'TimeLLM-ETTh1' \
+#   --llm_model 'GPT2' \
+#   --llm_dim 768 \
 
 # accelerate launch --multi_gpu --mixed_precision bf16 --num_processes $num_process --main_process_port $master_port run_main.py \
 #   --task_name long_term_forecast \

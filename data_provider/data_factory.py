@@ -19,7 +19,7 @@ def data_provider(args, flag):
     percent = args.percent
 
     if flag == 'test':
-        shuffle_flag = False
+        shuffle_flag = False # if test, disable shuffle
         drop_last = True
         batch_size = args.batch_size
         freq = args.freq
@@ -30,7 +30,7 @@ def data_provider(args, flag):
         freq = args.freq
 
     if args.data == 'm4':
-        drop_last = False
+        drop_last = False # disable drop_last for m4 dataset
         data_set = Data(
             root_path=args.root_path,
             data_path=args.data_path,
@@ -52,7 +52,7 @@ def data_provider(args, flag):
             target=args.target,
             timeenc=timeenc,
             freq=freq,
-            percent=percent,
+            percent=percent, # set percent for ETT dataset
             seasonal_patterns=args.seasonal_patterns
         )
     data_loader = DataLoader(
@@ -61,4 +61,4 @@ def data_provider(args, flag):
         shuffle=shuffle_flag,
         num_workers=args.num_workers,
         drop_last=drop_last)
-    return data_set, data_loader
+    return data_set, data_loader # return dataset and data loader
